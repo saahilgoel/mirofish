@@ -13,22 +13,21 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 WORKDIR /app
 
 # Copy dependency files first for caching
-COPY package.json package-lock.json ./
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 COPY backend/pyproject.toml backend/uv.lock ./backend/
 
-# Install dependencies (Node + Python)
-RUN npm ci \
-  && npm ci --prefix frontend \
-  && cd backend && uv sync --frozen
+# Install dependencies
+RUN cd frontend && npm ci \
+  && cd ../backend && uv sync --frozen
 
 # Copy project source
 COPY . .
 
 # Build frontend for production
-RUN npm run build --prefix frontend
+RUN cd frontend && npm run build
 
-EXPOSE 3000 5001
+# Expose single port - Flask serves both API and frontend static files
+EXPOSE 5001
 
-# Start both frontend (preview) and backend
-CMD ["npm", "run", "dev"]
+# Run Flask backend (serves API + frontend dist)
+CMD ["backend/.venv/bin/python", "-m", "flask", "--app", "backend/app", "run", "--host", "0.0.0.0", "--port", "5001"]
