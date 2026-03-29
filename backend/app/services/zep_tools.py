@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from zep_cloud.client import Zep
 
 from ..config import Config
+from ..utils.zep_rate_limit import RateLimitedZep
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
@@ -426,7 +427,7 @@ class ZepToolsService:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY is not configured")
 
-        self.client = Zep(api_key=self.api_key)
+        self.client = RateLimitedZep(api_key=self.api_key)
         # LLM client used by InsightForge to generate sub-queries
         self._llm_client = llm_client
         logger.info("ZepToolsService initialized")

@@ -15,6 +15,7 @@ from queue import Queue, Empty
 from zep_cloud.client import Zep
 
 from ..config import Config
+from ..utils.zep_rate_limit import RateLimitedZep
 from ..utils.logger import get_logger
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
@@ -243,7 +244,7 @@ class ZepGraphMemoryUpdater:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY is not configured")
 
-        self.client = Zep(api_key=self.api_key)
+        self.client = RateLimitedZep(api_key=self.api_key)
 
         # Activity queue
         self._activity_queue: Queue = Queue()

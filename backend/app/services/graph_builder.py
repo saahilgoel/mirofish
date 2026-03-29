@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from zep_cloud.client import Zep
 from zep_cloud import EpisodeData, EntityEdgeSourceTarget
+from ..utils.zep_rate_limit import RateLimitedZep
 
 from ..config import Config
 from ..models.task import TaskManager, TaskStatus
@@ -47,7 +48,7 @@ class GraphBuilderService:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY is not configured")
         
-        self.client = Zep(api_key=self.api_key)
+        self.client = RateLimitedZep(api_key=self.api_key)
         self.task_manager = TaskManager()
     
     def build_graph_async(

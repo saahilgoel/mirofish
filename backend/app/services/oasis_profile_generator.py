@@ -19,6 +19,7 @@ from openai import OpenAI
 from zep_cloud.client import Zep
 
 from ..config import Config
+from ..utils.zep_rate_limit import RateLimitedZep
 from ..utils.logger import get_logger
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
@@ -204,7 +205,7 @@ class OasisProfileGenerator:
         
         if self.zep_api_key:
             try:
-                self.zep_client = Zep(api_key=self.zep_api_key)
+                self.zep_client = RateLimitedZep(api_key=self.zep_api_key)
             except Exception as e:
                 logger.warning(f"Zep client initialization failed: {e}")
     
