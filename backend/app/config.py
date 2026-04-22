@@ -65,11 +65,14 @@ class Config:
     
     @classmethod
     def validate(cls):
-        """Validate required configuration"""
+        """Validate required configuration.
+
+        ZEP_API_KEY is no longer required: the project ships with a local
+        zep_cloud shim (backend/zep_cloud/) that stores graphs in SQLite and
+        uses the configured LLM for entity/relation extraction.
+        """
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY not configured")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY not configured")
         return errors
 

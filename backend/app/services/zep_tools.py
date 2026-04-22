@@ -423,9 +423,7 @@ class ZepToolsService:
     RETRY_DELAY = 2.0
 
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
-        self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY is not configured")
+        self.api_key = api_key or Config.ZEP_API_KEY or "local-shim"
 
         self.client = RateLimitedZep(api_key=self.api_key)
         # LLM client used by InsightForge to generate sub-queries

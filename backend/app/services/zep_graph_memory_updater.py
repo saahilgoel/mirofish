@@ -239,10 +239,7 @@ class ZepGraphMemoryUpdater:
             api_key: Zep API Key (optional, defaults to config)
         """
         self.graph_id = graph_id
-        self.api_key = api_key or Config.ZEP_API_KEY
-
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY is not configured")
+        self.api_key = api_key or Config.ZEP_API_KEY or "local-shim"
 
         self.client = RateLimitedZep(api_key=self.api_key)
 
