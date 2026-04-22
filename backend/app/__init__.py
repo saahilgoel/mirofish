@@ -3,7 +3,28 @@ MiroFish Backend - Flask application factory
 """
 
 import os
+import sys
 import warnings
+
+# Put backend/ at sys.path[0] BEFORE any zep_cloud imports can happen.
+# This ensures the local zep_cloud shim (backend/zep_cloud/) shadows the
+# pip-installed zep_cloud package in every launch context — `python run.py`
+# locally, `flask --app backend/app run` in the Docker CMD, anything else.
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND_DIR not in sys.path or sys.path[0] != _BACKEND_DIR:
+    # Remove any existing occurrence, then prepend.
+    try:
+        sys.path.remove(_BACKEND_DIR)
+    except ValueError:
+        pass
+    sys.path.insert(0, _BACKEND_DIR)
+
+# If something (e.g. a dependency's import-time side effect) already imported
+# the pip-installed zep_cloud, drop it from sys.modules so subsequent imports
+# resolve via the shim at backend/zep_cloud/.
+for _mod_name in list(sys.modules):
+    if _mod_name == "zep_cloud" or _mod_name.startswith("zep_cloud."):
+        del sys.modules[_mod_name]
 
 # Suppress multiprocessing resource_tracker warnings (from third-party libraries like transformers)
 # Must be set before all other imports
