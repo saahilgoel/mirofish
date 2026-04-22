@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Auto-deploy to Railway on push to origin main.
+#
+# Installed because Railway's GitHub auto-deploy on this service is disconnected,
+# and pushes to main were silently not deploying. Fires only for pushes to `main`
+# on the `origin` remote. Runs `railway up --detach` in the foreground so you see
+# the build-log URL, but the hook exits 0 regardless so a deploy failure never
+# blocks your git push.
+
+set -u
+
+remote="$1"
+url="$2"
+
+# Only auto-deploy when pushing to origin (skip mirrors/forks).
+case "$remote" in
+    origin) ;;
+    *) exit 0 ;;
+esac
+
+# stdin format: <local ref> <local sha> <remote ref> <remote sha>\n...
+deploy=0
+while read local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        deploy=1
+    fi
+done
+
+[ "$deploy" -eq 1 ] || exit 0
+
+# railway CLI must be installed and authenticated.
+if ! command -v railway >/dev/null 2>&1; then
+    echo "pre-push: railway CLI not found; skipping auto-deploy" >&2
+    exit 0
+fi
+
+echo "pre-push: push to origin/main detected — triggering Railway deploy..." >&2
+railway up --detach || echo "pre-push: railway up failed (push still proceeding)" >&2
+
+exit 0
