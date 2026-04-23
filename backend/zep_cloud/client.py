@@ -320,19 +320,62 @@ class _GraphAPI:
             raise ValueError("graph.add requires `data` or `episode=`")
         return self._ingest_one(graph_id, data, type)
 
+    _DEFAULT_INGEST_PARALLELISM = 8
+
     def add_batch(
         self,
         graph_id: str,
         episodes: Iterable[EpisodeData],
     ) -> List[_BatchEpisodeResult]:
-        results: List[_BatchEpisodeResult] = []
-        for ep in episodes:
-            results.append(self._ingest_one(graph_id, ep.data, getattr(ep, "type", "text")))
-        return results
+        """Ingest episodes concurrently. Each episode triggers an independent
+        LLM extraction call; SQLite writes are serialized by the store's
+        internal RLock, so parallelism gives us ~N× speedup bounded only by
+        the LLM provider's rate limit.
+        """
+        import concurrent.futures
+        import os as _os
+
+        eps = list(episodes)
+        if not eps:
+            return []
+
+        try:
+            override = int(_os.environ.get("ZEP_LOCAL_INGEST_PARALLELISM", "0"))
+        except (TypeError, ValueError):
+            override = 0
+        max_workers = override if override > 0 else self._DEFAULT_INGEST_PARALLELISM
+        max_workers = max(1, min(max_workers, len(eps)))
+
+        if max_workers == 1:
+            return [
+                self._ingest_one(graph_id, ep.data, getattr(ep, "type", "text"))
+                for ep in eps
+            ]
+
+        results: List[Optional[_BatchEpisodeResult]] = [None] * len(eps)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(
+                    self._ingest_one, graph_id, ep.data, getattr(ep, "type", "text")
+                ): idx
+                for idx, ep in enumerate(eps)
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                idx = futures[fut]
+                results[idx] = fut.result()
+        return [r for r in results if r is not None]
 
     def _ingest_one(self, graph_id: str, data: str, type_: str) -> _BatchEpisodeResult:
         store = self._client._store
-        ep_uuid = store.add_episode(graph_id, data, type_)
+        ep_uuid, is_new = store.add_episode(graph_id, data, type_)
+
+        # Resume short-circuit: if this chunk was already ingested + processed
+        # in a prior run, do not re-run extraction.
+        if not is_new:
+            existing = store.get_episode(ep_uuid)
+            if existing and existing.get("processed"):
+                logger.info("graph.add: skipping already-processed chunk %s", ep_uuid)
+                return _BatchEpisodeResult(uuid_=ep_uuid)
 
         # Load ontology for this graph (may be empty).
         ont_entities, ont_edges = store.get_ontology(graph_id)

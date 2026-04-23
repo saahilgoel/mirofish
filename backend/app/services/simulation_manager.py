@@ -234,7 +234,7 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
+        parallel_profile_count: int = 8
     ) -> SimulationState:
         """
         Prepare simulation environment (fully automated)
@@ -300,9 +300,87 @@ class SimulationManager:
                 self._save_simulation_state(state)
                 return state
             
+            # ========== Kick off Phase 3 in parallel with Phase 2 ==========
+            # Profile generation (Phase 2) is the slow path (~1 LLM call/entity).
+            # Config generation (Phase 3) is one big LLM call. They have no
+            # data dependency on each other — both only need filtered.entities.
+            # Running them concurrently saves ~30-60s per prep.
+            import threading as _threading
+            import traceback as _tb_mod
+
+            config_path = os.path.join(sim_dir, "simulation_config.json")
+            phase3_done = _threading.Event()
+            phase3_err: Dict[str, Any] = {}
+
+            def _run_phase3() -> None:
+                try:
+                    skip = False
+                    if os.path.exists(config_path):
+                        try:
+                            with open(config_path, "r", encoding="utf-8") as _f:
+                                _cached = json.load(_f)
+                            if isinstance(_cached, dict) and _cached:
+                                skip = True
+                                logger.info(
+                                    f"Resume: reusing existing simulation_config.json for {simulation_id}"
+                                )
+                        except Exception as _e:
+                            logger.warning(
+                                f"Existing simulation_config.json unreadable, regenerating: {_e}"
+                            )
+
+                    if skip:
+                        if progress_callback:
+                            progress_callback(
+                                "generating_config", 100,
+                                "Reusing cached simulation config",
+                                current=3, total=3,
+                            )
+                        state.config_generated = True
+                        if not state.config_reasoning:
+                            state.config_reasoning = "Resumed from cached config"
+                        return
+
+                    if progress_callback:
+                        progress_callback(
+                            "generating_config", 10,
+                            "Generating simulation config (in parallel with profiles)...",
+                            current=0, total=3,
+                        )
+                    cfg_gen = SimulationConfigGenerator()
+                    sim_params = cfg_gen.generate_config(
+                        simulation_id=simulation_id,
+                        project_id=state.project_id,
+                        graph_id=state.graph_id,
+                        simulation_requirement=simulation_requirement,
+                        document_text=document_text,
+                        entities=filtered.entities,
+                        enable_twitter=state.enable_twitter,
+                        enable_reddit=state.enable_reddit,
+                    )
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        f.write(sim_params.to_json())
+                    state.config_generated = True
+                    state.config_reasoning = sim_params.generation_reasoning
+                    if progress_callback:
+                        progress_callback(
+                            "generating_config", 100,
+                            "Config generation complete",
+                            current=3, total=3,
+                        )
+                except Exception as _e:
+                    phase3_err["exception"] = _e
+                    phase3_err["traceback"] = _tb_mod.format_exc()
+                    logger.error(f"Phase 3 (config) failed: {_e}")
+                finally:
+                    phase3_done.set()
+
+            phase3_thread = _threading.Thread(target=_run_phase3, daemon=True)
+            phase3_thread.start()
+
             # ========== Phase 2: Generate Agent Profiles ==========
             total_entities = len(filtered.entities)
-            
+
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 0,
@@ -310,7 +388,7 @@ class SimulationManager:
                     current=0,
                     total=total_entities
                 )
-            
+
             # Pass graph_id to enable Zep retrieval for richer context
             generator = OasisProfileGenerator(graph_id=state.graph_id)
             
@@ -380,59 +458,25 @@ class SimulationManager:
                     total=len(profiles)
                 )
             
-            # ========== Phase 3: LLM intelligent simulation config generation ==========
+            # ========== Phase 3 join: wait for the parallel config gen ==========
+            # By the time profile gen finishes (the slow path), config gen is
+            # almost certainly already done. Worst case we wait briefly here.
             if progress_callback:
                 progress_callback(
-                    "generating_config", 0,
-                    "Analyzing simulation requirements...",
-                    current=0,
-                    total=3
+                    "generating_config", 90,
+                    "Finalizing config (waiting for parallel task)...",
+                    current=2, total=3,
                 )
-            
-            config_generator = SimulationConfigGenerator()
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_config", 30,
-                    "Calling LLM to generate config...",
-                    current=1,
-                    total=3
+            phase3_done.wait(timeout=600)
+            if not phase3_done.is_set():
+                raise RuntimeError(
+                    "Config generation timed out (>10 min); aborting prepare."
                 )
-            
-            sim_params = config_generator.generate_config(
-                simulation_id=simulation_id,
-                project_id=state.project_id,
-                graph_id=state.graph_id,
-                simulation_requirement=simulation_requirement,
-                document_text=document_text,
-                entities=filtered.entities,
-                enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
-            )
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_config", 70,
-                    "Saving config files...",
-                    current=2,
-                    total=3
+            if "exception" in phase3_err:
+                logger.error(
+                    f"Re-raising parallel config error:\n{phase3_err.get('traceback', '')}"
                 )
-            
-            # Save config file
-            config_path = os.path.join(sim_dir, "simulation_config.json")
-            with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(sim_params.to_json())
-            
-            state.config_generated = True
-            state.config_reasoning = sim_params.generation_reasoning
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_config", 100,
-                    "Config generation complete",
-                    current=3,
-                    total=3
-                )
+                raise phase3_err["exception"]
             
             # Note: Run scripts remain in backend/scripts/ directory, no longer copied to simulation directory
             # When starting simulation, simulation_runner runs scripts from the scripts/ directory

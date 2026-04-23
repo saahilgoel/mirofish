@@ -12,14 +12,23 @@ from .logger import get_logger
 
 logger = get_logger('mirofish.zep_rate_limit')
 
-# Global request pacer: ensures minimum gap between Zep API calls
+# Global request pacer. Was 12s to respect Zep Cloud's free-tier 5 req/min.
+# We now run against the local zep_cloud shim (SQLite + LLM extraction),
+# which has no such quota — so the pacer is set to 0. Controllable via
+# ZEP_MIN_REQUEST_GAP env var if you ever re-enable a real Zep backend.
+import os as _os
 _last_request_time = 0.0
-_MIN_REQUEST_GAP = 12.0  # 5 req/min = 1 req per 12s
+try:
+    _MIN_REQUEST_GAP = float(_os.environ.get("ZEP_MIN_REQUEST_GAP", "0"))
+except (TypeError, ValueError):
+    _MIN_REQUEST_GAP = 0.0
 
 
 def _pace_request():
-    """Enforce minimum gap between Zep API calls to stay within free tier limits."""
+    """Enforce minimum gap between Zep API calls (no-op when gap=0)."""
     global _last_request_time
+    if _MIN_REQUEST_GAP <= 0:
+        return
     now = time.time()
     elapsed = now - _last_request_time
     if elapsed < _MIN_REQUEST_GAP:

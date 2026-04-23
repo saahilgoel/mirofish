@@ -68,3 +68,20 @@ export function getProject(projectId) {
     method: 'get'
   })
 }
+
+/**
+ * QuickSim: one-shot sim from a plain-English question. Returns a task_id
+ * that the caller polls via getTaskStatus(). On completion, `task.result`
+ * contains { project_id, graph_id, simulation_id, seed_preview, simulation_requirement }.
+ * @param {{question: string, project_name?: string}} payload
+ * @returns {Promise}
+ */
+export function startQuickSim(payload) {
+  return requestWithRetry(() =>
+    service({
+      url: '/api/graph/quicksim',
+      method: 'post',
+      data: payload
+    })
+  )
+}

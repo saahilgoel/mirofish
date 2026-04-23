@@ -948,6 +948,38 @@ class ReportAgent:
                     "interview_topic": "Interview topic or requirement description (e.g., 'understand students' views on the dormitory formaldehyde incident')",
                     "max_agents": "Maximum number of Agents to interview (optional, default 5, max 10)"
                 }
+            },
+            "query_actions": {
+                "name": "query_actions",
+                "description": (
+                    "Query the structured agent-action log directly (CREATE_POST, LIKE_POST, "
+                    "FOLLOW, REPOST, COMMENT etc.). Use this when you need exact behavior counts, "
+                    "agent-level attribution, or temporal sequencing. Bypasses the lossy graph "
+                    "abstraction — this is ground truth for what agents actually did. Returns a "
+                    "summary (counts per action type, top active agents, round range) plus the "
+                    "matching action rows. Filter to narrow results."
+                ),
+                "parameters": {
+                    "action_type": "Optional action type filter (e.g., CREATE_POST, LIKE_POST, FOLLOW)",
+                    "agent_name": "Optional agent name filter",
+                    "platform": "Optional 'twitter' or 'reddit'",
+                    "round_min": "Optional minimum round number",
+                    "round_max": "Optional maximum round number",
+                    "limit": "Max rows to return (default 200, max 1000)"
+                }
+            },
+            "monte_carlo_compare": {
+                "name": "monte_carlo_compare",
+                "description": (
+                    "Compare results across multiple Monte Carlo runs of THIS simulation. "
+                    "Returns per-run action summaries plus a cross-run consensus signal: "
+                    "which action types appeared in EVERY run (stable behavior), which only "
+                    "in some (variable behavior), and which agents were active across all "
+                    "runs (consistent influencers). Use this whenever you want to make a "
+                    "claim about what the simulation 'predicts' — robust claims are those "
+                    "that hold across runs, not just one rollout."
+                ),
+                "parameters": {}
             }
         }
     
@@ -1017,6 +1049,98 @@ class ReportAgent:
                     max_agents=max_agents
                 )
                 return result.to_text()
+
+            elif tool_name == "query_actions":
+                # Direct structured-log query — ground truth for agent behavior.
+                def _opt_int(key):
+                    v = parameters.get(key)
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        return None
+                limit = _opt_int("limit") or 200
+                limit = max(1, min(limit, 1000))
+                result = self.zep_tools.query_actions(
+                    simulation_id=self.simulation_id,
+                    action_type=parameters.get("action_type") or None,
+                    agent_name=parameters.get("agent_name") or None,
+                    platform=parameters.get("platform") or None,
+                    round_min=_opt_int("round_min"),
+                    round_max=_opt_int("round_max"),
+                    limit=limit,
+                )
+                # Render compact text the LLM can ingest cheaply.
+                lines = []
+                summ = result.get("summary", {}) or {}
+                lines.append(f"Total matching actions: {summ.get('total', 0)}")
+                rng = summ.get("round_range") or {}
+                if rng.get("min") is not None:
+                    lines.append(f"Round range: {rng['min']} - {rng['max']}")
+                bt = summ.get("by_action_type") or []
+                if bt:
+                    lines.append("By action type: " + ", ".join(
+                        f"{r['type']}={r['count']}" for r in bt[:10]
+                    ))
+                ta = summ.get("top_agents") or []
+                if ta:
+                    lines.append("Top agents: " + ", ".join(
+                        f"{r['agent']}({r['count']})" for r in ta[:10]
+                    ))
+                actions = result.get("actions") or []
+                if actions:
+                    lines.append(f"\nSample actions (showing {min(len(actions), 50)} of {len(actions)}):")
+                    for a in actions[:50]:
+                        args = a.get("action_args") or {}
+                        content = args.get("content") or args.get("text") or args.get("query") or ""
+                        if isinstance(content, str) and len(content) > 140:
+                            content = content[:140] + "..."
+                        lines.append(
+                            f"  r{a.get('round_num',0):>3} [{a.get('platform','?')}] "
+                            f"{a.get('agent_name','?')} -> {a.get('action_type','?')}"
+                            + (f" :: {content}" if content else "")
+                        )
+                if result.get("error"):
+                    lines.append(f"\n(error: {result['error']})")
+                return "\n".join(lines)
+
+            elif tool_name == "monte_carlo_compare":
+                # Per-run summaries + cross-run consensus.
+                from .monte_carlo import MonteCarloRunner
+                mc = MonteCarloRunner.variance_summary(self.simulation_id)
+                lines: List[str] = []
+                n = mc.get("n_runs", 0)
+                if n == 0:
+                    return ("No Monte Carlo runs found for this simulation. "
+                            "The current report is from a single rollout — "
+                            "claims about robustness are not supported.")
+                lines.append(f"Monte Carlo runs found: {n}")
+                consensus = mc.get("consensus", {}) or {}
+                if consensus.get("stable_action_types"):
+                    lines.append(
+                        "STABLE action types (in every run): "
+                        + ", ".join(consensus["stable_action_types"])
+                    )
+                if consensus.get("variable_action_types"):
+                    lines.append(
+                        "VARIABLE action types (only some runs): "
+                        + ", ".join(consensus["variable_action_types"])
+                    )
+                if consensus.get("top_agents_intersection"):
+                    lines.append(
+                        "Agents active in EVERY run (consistent influencers): "
+                        + ", ".join(consensus["top_agents_intersection"][:15])
+                    )
+                lines.append("")
+                lines.append("Per-run action totals:")
+                for run_id, summary in (mc.get("runs") or {}).items():
+                    bt = summary.get("by_action_type") or []
+                    bt_str = ", ".join(f"{r['type']}={r['count']}" for r in bt[:5])
+                    lines.append(
+                        f"  {run_id}: total={summary.get('total', 0)}  ({bt_str})"
+                    )
+                return "\n".join(lines)
             
             # ========== Backward-compatible legacy tools (internally redirected to new tools) ==========
             

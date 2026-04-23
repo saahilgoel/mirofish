@@ -321,13 +321,21 @@ def build_graph():
                 "error": "Ontology not yet generated, please call /ontology/generate first"
             }), 400
         
+        # GRAPH_BUILDING without force = resume. If the previous task was
+        # killed mid-ingest (e.g. container restart), re-running /build will
+        # reuse the existing graph_id and skip chunks already ingested.
+        resume = False
         if project.status == ProjectStatus.GRAPH_BUILDING and not force:
-            return jsonify({
-                "success": False,
-                "error": "Graph is being built, do not resubmit. To force rebuild, add force: true",
-                "task_id": project.graph_build_task_id
-            }), 400
-        
+            resume = bool(project.graph_id)
+            if resume:
+                logger.info(
+                    f"Resuming graph build for project {project_id} "
+                    f"(existing graph_id={project.graph_id})"
+                )
+            else:
+                # No graph_id yet — nothing to resume, just retry from scratch.
+                logger.info(f"Retrying graph build for project {project_id} (no prior graph_id)")
+
         # If force rebuild, reset state
         if force and project.status in [ProjectStatus.GRAPH_BUILDING, ProjectStatus.FAILED, ProjectStatus.GRAPH_COMPLETED]:
             project.status = ProjectStatus.ONTOLOGY_GENERATED
@@ -397,14 +405,22 @@ def build_graph():
                 )
                 total_chunks = len(chunks)
                 
-                # Create graph
-                task_manager.update_task(
-                    task_id,
-                    message="Creating Zep graph...",
-                    progress=10
-                )
-                graph_id = builder.create_graph(name=graph_name)
-                
+                # Create graph (reuse existing id if we're resuming)
+                if resume and project.graph_id:
+                    graph_id = project.graph_id
+                    task_manager.update_task(
+                        task_id,
+                        message=f"Resuming into existing graph {graph_id}...",
+                        progress=10,
+                    )
+                else:
+                    task_manager.update_task(
+                        task_id,
+                        message="Creating graph...",
+                        progress=10
+                    )
+                    graph_id = builder.create_graph(name=graph_name)
+
                 # Update project graph_id
                 project.graph_id = graph_id
                 ProjectManager.save_project(project)

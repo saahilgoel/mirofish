@@ -465,7 +465,7 @@ def prepare_simulation():
         
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
-        parallel_profile_count = data.get('parallel_profile_count', 5)
+        parallel_profile_count = data.get('parallel_profile_count', 8)
         
         # ========== Synchronously get entity count (before background task starts) ==========
         # This allows frontend to get expected total Agent count immediately after calling prepare
@@ -2709,3 +2709,66 @@ def close_simulation_env():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+# =============================================================================
+# Monte Carlo: run a prepared simulation N times in parallel and surface
+# variance. The single most important epistemic improvement we can make.
+# =============================================================================
+
+@simulation_bp.route('/<simulation_id>/monte_carlo/start', methods=['POST'])
+def monte_carlo_start(simulation_id: str):
+    """Start N parallel runs of a prepared simulation.
+
+    Body: {"n_runs": 3, "platform": "reddit", "max_rounds": 10}
+    """
+    from ..services.monte_carlo import MonteCarloRunner
+    data = request.get_json(silent=True) or {}
+    n_runs = int(data.get('n_runs', 3))
+    platform = (data.get('platform') or 'reddit').lower()
+    max_rounds = data.get('max_rounds')
+    try:
+        result = MonteCarloRunner.start_runs(
+            simulation_id=simulation_id,
+            n_runs=n_runs,
+            platform=platform,
+            max_rounds=int(max_rounds) if max_rounds is not None else None,
+        )
+        return jsonify({"success": True, "data": result})
+    except (ValueError, FileNotFoundError) as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Monte Carlo start failed: {e}")
+        return jsonify({
+            "success": False, "error": str(e),
+            "traceback": traceback.format_exc(),
+        }), 500
+
+
+@simulation_bp.route('/<simulation_id>/monte_carlo/status', methods=['GET'])
+def monte_carlo_status(simulation_id: str):
+    from ..services.monte_carlo import MonteCarloRunner
+    return jsonify({
+        "success": True,
+        "data": {
+            "simulation_id": simulation_id,
+            "is_running": MonteCarloRunner.is_running(simulation_id),
+            "runs": MonteCarloRunner.list_runs(simulation_id),
+        },
+    })
+
+
+@simulation_bp.route('/<simulation_id>/monte_carlo/variance', methods=['GET'])
+def monte_carlo_variance(simulation_id: str):
+    """Per-run summaries + cross-run consensus signal."""
+    from ..services.monte_carlo import MonteCarloRunner
+    return jsonify({
+        "success": True,
+        "data": MonteCarloRunner.variance_summary(simulation_id),
+    })
+
+
+@simulation_bp.route('/<simulation_id>/monte_carlo/stop', methods=['POST'])
+def monte_carlo_stop(simulation_id: str):
+    from ..services.monte_carlo import MonteCarloRunner
+    return jsonify({"success": True, "data": MonteCarloRunner.stop_runs(simulation_id)})

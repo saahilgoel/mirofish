@@ -9,6 +9,7 @@ Optimizations:
 """
 
 import json
+import os
 import random
 import time
 from typing import Dict, Any, List, Optional
@@ -208,7 +209,88 @@ class OasisProfileGenerator:
                 self.zep_client = RateLimitedZep(api_key=self.zep_api_key)
             except Exception as e:
                 logger.warning(f"Zep client initialization failed: {e}")
-    
+
+    def _load_existing_profiles_for_resume(
+        self, path: str, platform: str
+    ) -> Dict[str, OasisAgentProfile]:
+        """Parse a partially-written realtime output file and return a
+        {entity_name: OasisAgentProfile} map usable to skip regeneration on
+        resume. Returns {} on any parse failure (resume becomes a no-op)."""
+        try:
+            rows: List[Dict[str, Any]] = []
+            if platform == "reddit":
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    rows = data
+            else:
+                import csv
+
+                with open(path, "r", encoding="utf-8", newline="") as f:
+                    rows = list(csv.DictReader(f))
+
+            out: Dict[str, OasisAgentProfile] = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                name = row.get("name")
+                if not name:
+                    continue
+
+                def _int(key: str, default: int = 0) -> int:
+                    v = row.get(key)
+                    if v is None or v == "":
+                        return default
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        return default
+
+                def _opt_int(key: str) -> Optional[int]:
+                    v = row.get(key)
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        return None
+
+                topics = row.get("interested_topics") or []
+                if isinstance(topics, str):
+                    try:
+                        parsed = json.loads(topics)
+                        topics = parsed if isinstance(parsed, list) else [topics]
+                    except Exception:
+                        topics = [t.strip() for t in topics.split(",") if t.strip()]
+
+                profile = OasisAgentProfile(
+                    user_id=_int("user_id"),
+                    user_name=row.get("username") or row.get("user_name") or name,
+                    name=name,
+                    bio=row.get("bio", "") or "",
+                    persona=row.get("persona", "") or "",
+                    karma=_int("karma", 1000),
+                    friend_count=_int("friend_count", 100),
+                    follower_count=_int("follower_count", 150),
+                    statuses_count=_int("statuses_count", 500),
+                    age=_opt_int("age"),
+                    gender=row.get("gender") or None,
+                    mbti=row.get("mbti") or None,
+                    country=row.get("country") or None,
+                    profession=row.get("profession") or None,
+                    interested_topics=topics if isinstance(topics, list) else [],
+                    created_at=row.get("created_at")
+                    or datetime.now().strftime("%Y-%m-%d"),
+                )
+                out[name] = profile
+            return out
+        except Exception as e:
+            logger.warning(
+                f"Resume: could not parse existing profiles at {path} ({e}); "
+                f"will regenerate from scratch."
+            )
+            return {}
+
     def generate_profile_from_entity(
         self, 
         entity: EntityNode, 
@@ -875,15 +957,43 @@ Important:
         """
         import concurrent.futures
         from threading import Lock
-        
+
         # Set graph_id for Zep retrieval
         if graph_id:
             self.graph_id = graph_id
-        
+
         total = len(entities)
         profiles = [None] * total  # Pre-allocate list to maintain order
         completed_count = [0]  # Use list to allow modification in closure
         lock = Lock()
+
+        # ---- Resume support ----------------------------------------------
+        # If a realtime output file already exists from a previous (interrupted)
+        # run, load it and reuse profiles whose entity name matches. Only the
+        # remaining entities will actually be sent through the LLM.
+        resumed_by_name: Dict[str, OasisAgentProfile] = {}
+        if realtime_output_path and os.path.exists(realtime_output_path):
+            resumed_by_name = self._load_existing_profiles_for_resume(
+                realtime_output_path, output_platform
+            )
+        if resumed_by_name:
+            for idx, entity in enumerate(entities):
+                existing = resumed_by_name.get(entity.name)
+                if existing is None:
+                    continue
+                # Keep the slot's user_id stable to this run's index, but reuse
+                # everything else from the persisted profile.
+                existing.user_id = idx
+                existing.source_entity_uuid = existing.source_entity_uuid or entity.uuid
+                existing.source_entity_type = (
+                    existing.source_entity_type or (entity.get_entity_type() or "Entity")
+                )
+                profiles[idx] = existing
+            completed_count[0] = sum(1 for p in profiles if p is not None)
+            logger.info(
+                f"Resume: reusing {completed_count[0]}/{total} existing profiles "
+                f"from {realtime_output_path}"
+            )
         
         # Helper function for writing to file in real-time
         def save_profiles_realtime():
@@ -946,17 +1056,34 @@ Important:
                 )
                 return idx, fallback_profile, str(e)
         
-        logger.info(f"Starting parallel generation of {total} Agent personas (parallelism: {parallel_count})...")
+        remaining_pairs = [
+            (idx, ent) for idx, ent in enumerate(entities) if profiles[idx] is None
+        ]
+        remaining = len(remaining_pairs)
+        logger.info(
+            f"Starting parallel generation of {remaining} Agent personas "
+            f"(parallelism: {parallel_count}, {total - remaining} already cached)..."
+        )
         print(f"\n{'='*60}")
-        print(f"Starting Agent persona generation - {total} entities, parallelism: {parallel_count}")
+        print(
+            f"Starting Agent persona generation - {remaining} new (of {total} total), "
+            f"parallelism: {parallel_count}"
+        )
         print(f"{'='*60}\n")
-        
+
+        # If everything is already cached, emit a progress tick and skip the executor.
+        if remaining == 0:
+            if progress_callback:
+                progress_callback(total, total, f"All {total} profiles already generated")
+            save_profiles_realtime()
+            return profiles
+
         # Execute in parallel using thread pool
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
-            # Submit all tasks
+            # Submit tasks only for entities that don't have a cached profile yet.
             future_to_entity = {
                 executor.submit(generate_single_profile, idx, entity): (idx, entity)
-                for idx, entity in enumerate(entities)
+                for idx, entity in remaining_pairs
             }
             
             # Collect results

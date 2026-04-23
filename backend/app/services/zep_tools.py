@@ -1033,33 +1033,61 @@ class ZepToolsService:
                 if target_uuid:
                     entity_uuids.add(target_uuid)
 
-        # Get details for all relevant entities (no quantity limit, complete output)
+        # Bulk-fetch all nodes for the graph in ONE pass instead of N round-trips.
+        # The previous version did `client.graph.node.get(uuid_=uuid)` per entity,
+        # which under the legacy 12s/req Zep pacer turned a 100-entity report into
+        # 20+ minutes of pure sleep. With the local shim it's still N SQLite calls
+        # (~milliseconds each), but a single list_nodes paged scan is strictly
+        # fewer round-trips and lets us fold the loop body into a dict lookup.
         entity_insights = []
         node_map = {}  # Used for subsequent relationship chain building
 
-        for uuid in list(entity_uuids):  # Process all entities, no truncation
+        try:
+            from ..utils.zep_paging import fetch_all_nodes
+            all_nodes_for_graph = fetch_all_nodes(self.client, graph_id)
+        except Exception as e:
+            logger.warning(f"Bulk node fetch failed, falling back to per-uuid: {e}")
+            all_nodes_for_graph = []
+
+        graph_node_index = {}
+        for n in all_nodes_for_graph:
+            n_uuid = getattr(n, "uuid_", None) or getattr(n, "uuid", None)
+            if n_uuid:
+                graph_node_index[str(n_uuid)] = n
+
+        for uuid in list(entity_uuids):
             if not uuid:
                 continue
             try:
-                # Get info for each relevant node individually
-                node = self.get_node_detail(uuid)
-                if node:
-                    node_map[uuid] = node
-                    entity_type = next((l for l in node.labels if l not in ["Entity", "Node"]), "Entity")
-
-                    # Get all related facts for this entity (no truncation)
-                    related_facts = [
-                        f for f in all_facts
-                        if node.name.lower() in f.lower()
-                    ]
-
-                    entity_insights.append({
-                        "uuid": node.uuid,
-                        "name": node.name,
-                        "type": entity_type,
-                        "summary": node.summary,
-                        "related_facts": related_facts  # Complete output, no truncation
-                    })
+                raw_node = graph_node_index.get(str(uuid))
+                if raw_node is None:
+                    # Either the bulk fetch failed or this uuid is stale.
+                    # Fall back to a single fetch only for the misses.
+                    node = self.get_node_detail(uuid)
+                else:
+                    node = NodeInfo(
+                        uuid=str(getattr(raw_node, "uuid_", "") or getattr(raw_node, "uuid", "")),
+                        name=getattr(raw_node, "name", "") or "",
+                        labels=list(getattr(raw_node, "labels", []) or []),
+                        summary=getattr(raw_node, "summary", "") or "",
+                        attributes=dict(getattr(raw_node, "attributes", {}) or {}),
+                    )
+                if not node:
+                    continue
+                node_map[uuid] = node
+                entity_type = next(
+                    (l for l in node.labels if l not in ["Entity", "Node"]), "Entity"
+                )
+                related_facts = [
+                    f for f in all_facts if node.name and node.name.lower() in f.lower()
+                ]
+                entity_insights.append({
+                    "uuid": node.uuid,
+                    "name": node.name,
+                    "type": entity_type,
+                    "summary": node.summary,
+                    "related_facts": related_facts,
+                })
             except Exception as e:
                 logger.debug(f"Failed to get node {uuid}: {e}")
                 continue
@@ -1732,3 +1760,55 @@ Please generate the interview summary."""
             logger.warning(f"Failed to generate interview summary: {e}")
             # Fallback: simple concatenation
             return f"Interviewed {len(interviews)} respondents, including: " + ", ".join([i.agent_name for i in interviews])
+
+    # ====================================================================
+    # query_actions — direct query against the structured action log
+    # populated by simulation_runner. Bypasses the lossy "stringify ->
+    # graph episode -> re-extract" path that the other tools rely on.
+    # ====================================================================
+
+    def query_actions(
+        self,
+        simulation_id: str,
+        action_type: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        platform: Optional[str] = None,
+        round_min: Optional[int] = None,
+        round_max: Optional[int] = None,
+        run_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        """Query the structured agent-action log for a simulation.
+
+        Returns a dict with:
+          - summary: aggregate counts (per-type, per-agent, round range)
+          - actions: matching action rows (capped at `limit`)
+
+        The `actions` list is the ground truth for what agents actually did,
+        unmediated by graph extraction. Use this when answering questions
+        that depend on exact behavior counts, sequencing, or agent-level
+        attribution.
+        """
+        try:
+            from zep_cloud._storage import get_store
+            store = get_store()
+        except Exception as e:
+            logger.warning(f"query_actions: storage unavailable: {e}")
+            return {"summary": {}, "actions": [], "error": str(e)}
+
+        try:
+            summary = store.action_summary(simulation_id, run_id=run_id)
+            actions = store.query_actions(
+                simulation_id=simulation_id,
+                action_type=action_type,
+                agent_name=agent_name,
+                platform=platform,
+                round_min=round_min,
+                round_max=round_max,
+                run_id=run_id,
+                limit=limit,
+            )
+            return {"summary": summary, "actions": actions}
+        except Exception as e:
+            logger.warning(f"query_actions failed: {e}")
+            return {"summary": {}, "actions": [], "error": str(e)}

@@ -669,11 +669,27 @@ class SimulationRunner:
                                 success=action_data.get("success", True),
                             )
                             state.add_action(action)
-                            
+
                             # Update round
                             if action.round_num and action.round_num > state.current_round:
                                 state.current_round = action.round_num
-                            
+
+                            # Persist a STRUCTURED record of the action. This is
+                            # the source-of-truth the report agent queries via
+                            # the `query_actions` tool — independent of the
+                            # lossy "stringify -> graph episode" path.
+                            try:
+                                from zep_cloud._storage import get_store
+                                get_store().record_action(
+                                    simulation_id=state.simulation_id,
+                                    action_data=action_data,
+                                    platform=platform,
+                                    run_id=getattr(state, "run_id", None),
+                                )
+                            except Exception:
+                                # Recording is best-effort — never block the runner.
+                                pass
+
                             # If graph memory update is enabled, send activity to Zep
                             if graph_updater:
                                 graph_updater.add_activity_from_dict(action_data, platform)
