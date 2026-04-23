@@ -78,8 +78,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     created_at   REAL
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_graph ON episodes(graph_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_graph_hash
-    ON episodes(graph_id, data_hash);
+-- The (graph_id, data_hash) unique index is created in _init_schema AFTER
+-- a column-presence check, because pre-existing databases won't have the
+-- data_hash column yet and sqlite's CREATE INDEX IF NOT EXISTS still errors
+-- if the referenced column is missing.
 
 -- Structured agent action log. Populated by simulation_runner as actions are
 -- streamed back from the OASIS subprocess. The report agent queries this
@@ -127,22 +129,36 @@ class _Store:
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:
             conn.executescript(_SCHEMA)
-            # Forward-compatible migrations for databases created before
-            # the resume-by-hash support landed.
+
+            # Forward-compatible migration: older databases predate `data_hash`
+            # on episodes. Add it, backfill, then create the unique index.
             cols = {row["name"] for row in conn.execute("PRAGMA table_info(episodes)").fetchall()}
             if "data_hash" not in cols:
                 conn.execute("ALTER TABLE episodes ADD COLUMN data_hash TEXT")
-                # Backfill existing rows so the unique index below can be built.
                 rows = conn.execute("SELECT uuid, data FROM episodes").fetchall()
                 for r in rows:
                     h = hashlib.sha1((r["data"] or "").encode("utf-8")).hexdigest()
                     conn.execute(
                         "UPDATE episodes SET data_hash=? WHERE uuid=?", (h, r["uuid"])
                     )
+
+            # Now the column is guaranteed to exist — safe to create the index.
+            # Build it as NON-UNIQUE if there happen to be duplicates from the
+            # backfill (shouldn't, but we guard against aborting schema init).
+            try:
                 conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_graph_hash "
                     "ON episodes(graph_id, data_hash)"
                 )
+            except sqlite3.IntegrityError:
+                # Legacy duplicates exist — fall back to a non-unique index.
+                # add_episode still does a SELECT-then-INSERT, so uniqueness is
+                # enforced in application code regardless.
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_episodes_graph_hash "
+                    "ON episodes(graph_id, data_hash)"
+                )
+
             conn.commit()
 
     # ---- graphs ----------------------------------------------------------

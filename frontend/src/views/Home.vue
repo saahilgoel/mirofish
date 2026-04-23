@@ -4,9 +4,6 @@
     <nav class="navbar">
       <div class="nav-brand">MIROFISH</div>
       <div class="nav-links">
-        <router-link to="/quicksim" class="github-link quicksim-link">
-          ⚡ QuickSim <span class="arrow">→</span>
-        </router-link>
         <a href="https://github.com/666ghj/MiroFish" target="_blank" class="github-link">
           Visit our GitHub <span class="arrow">↗</span>
         </a>
@@ -48,6 +45,44 @@
           <button class="scroll-down-btn" @click="scrollToBottom">
             ↓
           </button>
+        </div>
+      </section>
+
+      <!-- QuickSim shortcut: skip the forms entirely. -->
+      <section class="quicksim-cta">
+        <div class="qcta-inner">
+          <div class="qcta-left">
+            <div class="qcta-tag-row">
+              <span class="orange-tag">QuickSim</span>
+              <span class="qcta-kicker">/ one question → full simulation</span>
+            </div>
+            <h3 class="qcta-title">
+              Skip the upload. Just <span class="qcta-highlight">ask</span>.
+            </h3>
+            <p class="qcta-desc">
+              Type a question. We'll auto-generate the seed, the simulation
+              prompt, build the graph, spawn agents, and prep everything —
+              no forms.
+            </p>
+          </div>
+          <div class="qcta-right">
+            <textarea
+              v-model="quicksimQuestion"
+              class="qcta-input"
+              rows="3"
+              placeholder="e.g. In 3-5 years, which AI products will 15M Indian lifestyle MSME owners adopt, and what should Shiprocket triple down on?"
+              @keydown.meta.enter.prevent="gotoQuickSim"
+              @keydown.ctrl.enter.prevent="gotoQuickSim"
+            ></textarea>
+            <button
+              class="qcta-btn"
+              :disabled="!canLaunchQuickSim"
+              @click="gotoQuickSim"
+            >
+              <span>Launch QuickSim</span>
+              <span class="arrow">→</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -215,6 +250,19 @@ import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
 
 const router = useRouter()
+
+// QuickSim inline CTA state (additive — independent of the upload flow below)
+const quicksimQuestion = ref('')
+const canLaunchQuickSim = computed(
+  () => quicksimQuestion.value.trim().length >= 10
+)
+const gotoQuickSim = () => {
+  const q = quicksimQuestion.value.trim()
+  router.push({
+    path: '/quicksim',
+    query: q ? { q } : {},
+  })
+}
 
 // Form data
 const formData = ref({
@@ -884,10 +932,122 @@ const startSimulation = () => {
     padding-right: 0;
     margin-bottom: 40px;
   }
-  
+
   .hero-logo {
     max-width: 200px;
     margin-bottom: 20px;
   }
+}
+
+/* ====================================================================== */
+/* QuickSim inline CTA (above dashboard-section)                          */
+/* Matches the aesthetic: orange tag, mono labels, black button on hover  */
+/* ====================================================================== */
+.quicksim-cta {
+  margin-bottom: 60px;
+  border: 1px solid #CCC;
+  padding: 8px;
+  background: var(--white);
+}
+.qcta-inner {
+  display: flex;
+  gap: 32px;
+  padding: 28px 32px;
+  align-items: stretch;
+  background: #FAFAFA;
+  border: 1px solid #EEE;
+}
+.qcta-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.qcta-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.qcta-kicker {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: #999;
+  letter-spacing: 0.5px;
+}
+.qcta-title {
+  font-size: 1.8rem;
+  font-weight: 500;
+  margin: 0 0 10px 0;
+  letter-spacing: -0.5px;
+  color: var(--black);
+  line-height: 1.25;
+}
+.qcta-highlight {
+  color: var(--orange);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.qcta-desc {
+  font-size: 0.95rem;
+  color: var(--gray-text);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 420px;
+}
+.qcta-right {
+  flex: 1.2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.qcta-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #DDD;
+  background: var(--white);
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  resize: vertical;
+  outline: none;
+  color: var(--black);
+}
+.qcta-input:focus {
+  border-color: var(--orange);
+}
+.qcta-btn {
+  border: 1px solid var(--black);
+  background: var(--black);
+  color: var(--white);
+  padding: 14px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+.qcta-btn:not(:disabled):hover {
+  background: var(--orange);
+  border-color: var(--orange);
+  transform: translateY(-1px);
+}
+.qcta-btn:disabled {
+  background: #E5E5E5;
+  border-color: #E5E5E5;
+  color: #999;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .qcta-inner { flex-direction: column; gap: 20px; padding: 24px; }
+  .qcta-desc { max-width: none; }
 }
 </style>

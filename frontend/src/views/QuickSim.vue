@@ -1,106 +1,210 @@
 <template>
-  <div class="quicksim-page">
-    <nav class="qs-nav">
-      <router-link to="/" class="qs-brand">MIROFISH</router-link>
-      <span class="qs-tagline">QuickSim / one question → full simulation</span>
+  <div class="qs-container">
+    <!-- Top Navigation Bar: matches Home -->
+    <nav class="navbar">
+      <router-link to="/" class="nav-brand">MIROFISH</router-link>
+      <div class="nav-links">
+        <router-link to="/" class="github-link">
+          ← Home
+        </router-link>
+      </div>
     </nav>
 
-    <main class="qs-main">
-      <section class="qs-card">
-        <header class="qs-header">
-          <span class="qs-kicker">>_ QuickSim</span>
-          <h1 class="qs-title">Ask the future a question.</h1>
-          <p class="qs-sub">
-            We'll generate the seed context, the simulation prompt, build the
-            knowledge graph, spawn agents, and prep a simulation — no forms.
-          </p>
-        </header>
+    <div class="main-content">
+      <!-- Hero -->
+      <section class="hero-section">
+        <div class="hero-left">
+          <div class="tag-row">
+            <span class="orange-tag">QuickSim</span>
+            <span class="version-text">/ one question → full simulation</span>
+          </div>
 
-        <div v-if="phase === 'idle'" class="qs-input-block">
-          <label class="qs-label" for="qs-question">Your question</label>
-          <textarea
-            id="qs-question"
-            v-model="question"
-            class="qs-textarea"
-            rows="8"
-            placeholder="e.g. In 3-5 years, which AI-driven products will 15M Indian lifestyle MSME owners actually adopt, and what should Shiprocket triple down on to win this market?"
-            :disabled="loading"
-          ></textarea>
+          <h1 class="main-title" v-if="phase === 'idle'">
+            Ask the future<br>
+            <span class="gradient-text">a question.</span>
+          </h1>
+          <h1 class="main-title" v-else-if="phase === 'done'">
+            <span class="gradient-text">Ready.</span>
+          </h1>
+          <h1 class="main-title" v-else-if="phase === 'failed'">
+            <span class="gradient-text">Something broke.</span>
+          </h1>
+          <h1 class="main-title" v-else>
+            <span class="gradient-text">Running…</span>
+          </h1>
 
-          <label class="qs-label qs-label-small" for="qs-projname">Project name (optional)</label>
-          <input
-            id="qs-projname"
-            v-model="projectName"
-            class="qs-input"
-            placeholder="QuickSim"
-            :disabled="loading"
-          />
+          <div class="hero-desc">
+            <p v-if="phase === 'idle'">
+              We'll generate the <span class="highlight-bold">seed context</span>,
+              the <span class="highlight-bold">simulation prompt</span>,
+              build the <span class="highlight-bold">knowledge graph</span>,
+              spawn <span class="highlight-orange">agents</span>, and prep a
+              simulation — <span class="highlight-code">no forms, no uploads</span>.
+            </p>
+            <p v-else-if="phase === 'running'">
+              Simulation pipeline is streaming.
+              Progress updates every 2s — if the tick counter grows, it's still
+              working<span class="blinking-cursor">_</span>
+            </p>
+            <p v-else-if="phase === 'done'">
+              Seed generated, graph built, agents spawned, simulation prepared.
+              Jump to the simulation view to run it.
+            </p>
+            <p v-else>
+              The pipeline failed mid-run. Error below — retry or tweak the
+              question.
+            </p>
+          </div>
 
-          <div class="qs-actions">
-            <button
-              class="qs-submit"
-              :disabled="!canSubmit || loading"
-              @click="launch"
-            >
-              <span v-if="!loading">Launch QuickSim</span>
-              <span v-else>Launching...</span>
-              <span class="qs-arrow">→</span>
-            </button>
-            <div v-if="error" class="qs-error">{{ error }}</div>
-          </div>
-        </div>
-
-        <div v-else class="qs-progress-block">
-          <div class="qs-progress-head">
-            <span class="qs-phase-label">{{ phaseLabel }}</span>
-            <span class="qs-elapsed">elapsed {{ elapsedSec }}s</span>
-          </div>
-          <div class="qs-progress-bar">
-            <div class="qs-progress-fill" :style="{ width: progressPct + '%' }"></div>
-          </div>
-          <div class="qs-progress-row">
-            <span class="qs-progress-pct">{{ progressPct }}%</span>
-            <span class="qs-progress-msg">{{ message }}</span>
-          </div>
-          <div v-if="secondsSinceTick > 5" class="qs-heartbeat">
-            still working — last tick {{ secondsSinceTick }}s ago
-          </div>
-          <div v-if="phase === 'failed'" class="qs-error">
-            {{ error || 'QuickSim failed. Check backend logs.' }}
-            <button class="qs-retry" @click="reset">Try again</button>
-          </div>
-          <div v-if="phase === 'done' && result" class="qs-result">
-            <div class="qs-result-row">
-              <span class="qs-result-label">simulation</span>
-              <code>{{ result.simulation_id }}</code>
-            </div>
-            <div class="qs-result-row">
-              <span class="qs-result-label">project</span>
-              <code>{{ result.project_id }}</code>
-            </div>
-            <div class="qs-result-actions">
-              <router-link class="qs-submit" :to="`/simulation/${result.simulation_id}`">
-                Open Simulation <span class="qs-arrow">→</span>
-              </router-link>
-            </div>
-          </div>
+          <div class="decoration-square"></div>
         </div>
       </section>
-    </main>
+
+      <!-- Console (single column; the right panel of Home becomes the center here) -->
+      <section class="console-wrap">
+        <div class="console-box">
+          <!-- IDLE: input form -->
+          <template v-if="phase === 'idle'">
+            <div class="console-section">
+              <div class="console-header">
+                <span class="console-label">>_ 01 / Your Question</span>
+                <span class="console-meta">plain english, 10-4000 chars</span>
+              </div>
+              <div class="input-wrapper">
+                <textarea
+                  v-model="question"
+                  class="code-input"
+                  rows="8"
+                  placeholder="e.g. In 3-5 years, which AI-driven products will 15M Indian lifestyle MSME owners actually adopt, and what should Shiprocket triple down on to win this market?"
+                  :disabled="loading"
+                ></textarea>
+                <div class="model-badge">Engine: MiroFish-V1.0</div>
+              </div>
+            </div>
+
+            <div class="console-divider"><span>Parameters</span></div>
+
+            <div class="console-section">
+              <div class="console-header">
+                <span class="console-label">02 / Project Name (optional)</span>
+              </div>
+              <div class="input-wrapper input-wrapper-slim">
+                <input
+                  v-model="projectName"
+                  class="code-input code-input-slim"
+                  placeholder="QuickSim"
+                  :disabled="loading"
+                />
+              </div>
+            </div>
+
+            <div class="console-section btn-section">
+              <button
+                class="start-engine-btn"
+                :disabled="!canSubmit || loading"
+                @click="launch"
+              >
+                <span>{{ loading ? 'Launching…' : 'Launch QuickSim' }}</span>
+                <span class="btn-arrow">→</span>
+              </button>
+              <div v-if="error" class="error-banner">{{ error }}</div>
+            </div>
+          </template>
+
+          <!-- RUNNING / DONE / FAILED: progress + result panel -->
+          <template v-else>
+            <div class="console-section">
+              <div class="console-header">
+                <span class="console-label">>_ {{ phaseLabel }}</span>
+                <span class="console-meta">elapsed {{ elapsedSec }}s</span>
+              </div>
+
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: progressPct + '%' }"></div>
+              </div>
+              <div class="progress-row">
+                <span class="progress-pct">{{ progressPct }}%</span>
+                <span class="progress-msg">{{ message || '—' }}</span>
+              </div>
+              <div v-if="phase === 'running' && secondsSinceTick > 5" class="heartbeat">
+                still working — last tick {{ secondsSinceTick }}s ago
+              </div>
+            </div>
+
+            <div class="console-divider"><span>Output</span></div>
+
+            <div class="console-section" v-if="phase === 'done' && result">
+              <div class="result-row">
+                <span class="result-label">simulation_id</span>
+                <code>{{ result.simulation_id }}</code>
+              </div>
+              <div class="result-row">
+                <span class="result-label">project_id</span>
+                <code>{{ result.project_id }}</code>
+              </div>
+              <div class="result-row" v-if="result.graph_id">
+                <span class="result-label">graph_id</span>
+                <code>{{ result.graph_id }}</code>
+              </div>
+            </div>
+
+            <div class="console-section" v-if="phase === 'failed'">
+              <div class="error-banner">{{ error || 'Unknown failure' }}</div>
+            </div>
+
+            <div class="console-section btn-section">
+              <router-link
+                v-if="phase === 'done' && result"
+                class="start-engine-btn"
+                :to="`/simulation/${result.simulation_id}`"
+              >
+                <span>Open Simulation</span>
+                <span class="btn-arrow">→</span>
+              </router-link>
+              <button
+                v-else-if="phase === 'failed'"
+                class="start-engine-btn"
+                @click="reset"
+              >
+                <span>Try Again</span>
+                <span class="btn-arrow">↻</span>
+              </button>
+              <button
+                v-else
+                class="start-engine-btn"
+                :disabled="true"
+              >
+                <span>Running — please wait</span>
+                <span class="btn-arrow">…</span>
+              </button>
+            </div>
+          </template>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { startQuickSim, getTaskStatus } from '../api/graph'
 
+const route = useRoute()
 const question = ref('')
 const projectName = ref('')
+
+onMounted(() => {
+  // Home's inline CTA passes the question via ?q= to pre-fill here.
+  const q = route.query?.q
+  if (typeof q === 'string' && q.trim()) {
+    question.value = q.trim()
+  }
+})
 const loading = ref(false)
 const error = ref('')
 
-// phase: idle | running | done | failed
-const phase = ref('idle')
+const phase = ref('idle') // idle | running | done | failed
 const progressPct = ref(0)
 const message = ref('')
 const result = ref(null)
@@ -126,11 +230,10 @@ async function launch() {
   loading.value = true
   phase.value = 'running'
   progressPct.value = 1
-  message.value = 'Submitting...'
+  message.value = 'Submitting…'
   startedAt.value = Date.now()
   lastTickAt.value = Date.now()
 
-  // Start the elapsed/heartbeat ticker.
   tickTimer = setInterval(() => {
     const now = Date.now()
     elapsedSec.value = Math.floor((now - startedAt.value) / 1000)
@@ -150,7 +253,7 @@ async function launch() {
     error.value = e?.response?.data?.error || e?.message || 'Request failed'
     phase.value = 'failed'
     loading.value = false
-    clearInterval(tickTimer)
+    stopTimers()
   }
 }
 
@@ -180,7 +283,6 @@ function pollTask(taskId) {
         return
       }
     } catch (e) {
-      // Network hiccup — keep polling; surface if it persists.
       console.warn('QuickSim poll failed:', e)
     }
   }
@@ -208,210 +310,292 @@ onBeforeUnmount(stopTimers)
 </script>
 
 <style scoped>
-.quicksim-page {
+/* Match Home.vue palette exactly */
+:root {
+  --black: #000000;
+  --white: #FFFFFF;
+  --orange: #FF4500;
+  --gray-text: #666666;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
+}
+
+.qs-container {
   min-height: 100vh;
-  background: #0b0b0e;
-  color: #eaeaea;
-  font-family: 'Inter', 'Space Grotesk', system-ui, sans-serif;
-  display: flex;
-  flex-direction: column;
+  background: #FFFFFF;
+  font-family: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
+  color: #000;
 }
 
-.qs-nav {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 20px 32px;
-  border-bottom: 1px solid #1c1c22;
-}
-.qs-brand {
-  font-family: 'JetBrains Mono', monospace;
-  letter-spacing: 0.15em;
-  font-weight: 700;
-  color: #f5f5f5;
-  text-decoration: none;
-}
-.qs-tagline {
-  font-family: 'JetBrains Mono', monospace;
-  color: #6e6e78;
-  font-size: 13px;
-}
-
-.qs-main {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 48px 24px;
-}
-
-.qs-card {
-  width: min(720px, 100%);
-  background: #111116;
-  border: 1px solid #1f1f27;
-  border-radius: 14px;
-  padding: 40px 40px 32px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
-}
-
-.qs-kicker {
-  display: inline-block;
-  font-family: 'JetBrains Mono', monospace;
-  color: #ff8a3d;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  margin-bottom: 12px;
-}
-
-.qs-title {
-  font-size: 34px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0 0 12px;
-}
-
-.qs-sub {
-  color: #9a9aa5;
-  font-size: 15px;
-  line-height: 1.55;
-  margin: 0 0 28px;
-  max-width: 560px;
-}
-
-.qs-label {
-  display: block;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  color: #7a7a85;
-  letter-spacing: 0.08em;
-  margin: 20px 0 8px;
-  text-transform: uppercase;
-}
-.qs-label-small { font-size: 11px; }
-
-.qs-textarea, .qs-input {
-  width: 100%;
-  background: #0b0b0e;
-  color: #f0f0f2;
-  border: 1px solid #23232c;
-  border-radius: 8px;
-  padding: 14px 16px;
-  font-size: 15px;
-  line-height: 1.5;
-  font-family: inherit;
-  outline: none;
-  resize: vertical;
-  transition: border-color 0.15s;
-  box-sizing: border-box;
-}
-.qs-textarea:focus, .qs-input:focus { border-color: #ff8a3d; }
-.qs-textarea:disabled, .qs-input:disabled { opacity: 0.6; cursor: not-allowed; }
-.qs-input { min-height: 44px; }
-
-.qs-actions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-top: 28px;
-}
-
-.qs-submit {
-  background: #ff8a3d;
-  color: #0b0b0e;
-  border: none;
-  padding: 14px 22px;
-  font-weight: 600;
-  font-size: 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  text-decoration: none;
-  transition: transform 0.1s, background 0.15s;
-}
-.qs-submit:hover:not(:disabled) { background: #ff9a55; transform: translateY(-1px); }
-.qs-submit:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.qs-arrow { font-family: 'JetBrains Mono', monospace; }
-
-.qs-error {
-  color: #ff6b6b;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.qs-retry {
-  background: transparent;
-  color: #ff8a3d;
-  border: 1px solid #ff8a3d;
-  border-radius: 6px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.qs-progress-block { padding-top: 12px; }
-.qs-progress-head {
+/* Navbar — same as Home */
+.navbar {
+  height: 60px;
+  background: #000;
+  color: #FFF;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  padding: 0 40px;
+}
+.nav-brand {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  color: #9a9aa5;
-  margin-bottom: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  font-size: 1.2rem;
+  color: #FFF;
+  text-decoration: none;
 }
-.qs-elapsed { color: #6e6e78; }
+.nav-links { display: flex; align-items: center; }
+.github-link {
+  color: #FFF;
+  text-decoration: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 0.2s;
+}
+.github-link:hover { opacity: 0.8; }
 
-.qs-progress-bar {
-  height: 6px;
-  background: #1a1a22;
-  border-radius: 4px;
-  overflow: hidden;
+/* Main */
+.main-content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 60px 40px;
 }
-.qs-progress-fill {
+
+/* Hero */
+.hero-section {
+  display: flex;
+  margin-bottom: 40px;
+}
+.hero-left {
+  flex: 1;
+  padding-right: 40px;
+}
+.tag-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 25px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
+.orange-tag {
+  background: #FF4500;
+  color: #FFF;
+  padding: 4px 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  font-size: 0.75rem;
+}
+.version-text { color: #999; font-weight: 500; letter-spacing: 0.5px; }
+
+.main-title {
+  font-size: 4rem;
+  line-height: 1.15;
+  font-weight: 500;
+  margin: 0 0 32px 0;
+  letter-spacing: -2px;
+  color: #000;
+}
+.gradient-text {
+  background: linear-gradient(90deg, #000 0%, #444 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
+}
+
+.hero-desc {
+  font-size: 1.05rem;
+  line-height: 1.75;
+  color: #666;
+  max-width: 640px;
+  font-weight: 400;
+  margin-bottom: 24px;
+}
+.highlight-bold { color: #000; font-weight: 700; }
+.highlight-orange { color: #FF4500; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+.highlight-code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+  color: #000;
+  font-weight: 600;
+}
+.blinking-cursor {
+  color: #FF4500;
+  animation: blink 1s step-end infinite;
+  font-weight: 700;
+}
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.decoration-square { width: 16px; height: 16px; background: #FF4500; }
+
+/* Console box — matches Home */
+.console-wrap { margin-top: 20px; }
+.console-box {
+  border: 1px solid #CCC;
+  padding: 8px;
+}
+.console-section { padding: 20px; }
+.console-section.btn-section { padding-top: 0; }
+.console-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: #666;
+}
+.console-label { font-weight: 500; }
+.console-meta { color: #999; }
+
+.input-wrapper {
+  position: relative;
+  border: 1px solid #DDD;
+  background: #FAFAFA;
+}
+.input-wrapper-slim { min-height: 54px; }
+.code-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  padding: 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  min-height: 150px;
+  color: #000;
+}
+.code-input-slim { min-height: 44px; padding: 16px 20px; }
+.model-badge {
+  position: absolute;
+  bottom: 10px;
+  right: 15px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: #AAA;
+}
+
+.console-divider {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+}
+.console-divider::before,
+.console-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #EEE;
+}
+.console-divider span {
+  padding: 0 15px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: #BBB;
+  letter-spacing: 1px;
+}
+
+/* Launch button — matches Home's start-engine-btn */
+.start-engine-btn {
+  width: 100%;
+  box-sizing: border-box;
+  background: #000;
+  color: #FFF;
+  border: 1px solid #000;
+  padding: 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 1.1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  letter-spacing: 1px;
+  text-decoration: none;
+}
+.start-engine-btn:not(:disabled) {
+  animation: pulse-border 2s infinite;
+}
+.start-engine-btn:hover:not(:disabled) {
+  background: #FF4500;
+  border-color: #FF4500;
+  transform: translateY(-2px);
+}
+.start-engine-btn:active:not(:disabled) { transform: translateY(0); }
+.start-engine-btn:disabled {
+  background: #E5E5E5;
+  color: #999;
+  cursor: not-allowed;
+  transform: none;
+  border-color: #E5E5E5;
+  animation: none;
+}
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 69, 0, 0.25); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 69, 0, 0); }
+}
+
+/* Progress + result */
+.progress-bar {
+  height: 6px;
+  background: #F0F0F0;
+  overflow: hidden;
+  margin-top: 10px;
+}
+.progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #ff8a3d, #ff6b6b);
+  background: linear-gradient(90deg, #000 0%, #FF4500 100%);
   transition: width 0.3s ease;
 }
-
-.qs-progress-row {
+.progress-row {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   margin-top: 12px;
-  font-size: 13px;
-  color: #c7c7cf;
   gap: 16px;
+  font-size: 0.9rem;
 }
-.qs-progress-pct {
+.progress-pct {
   font-family: 'JetBrains Mono', monospace;
-  color: #ff8a3d;
-  font-weight: 600;
+  color: #FF4500;
+  font-weight: 700;
 }
-.qs-progress-msg { flex: 1; text-align: right; color: #9a9aa5; }
-
-.qs-heartbeat {
+.progress-msg { flex: 1; text-align: right; color: #666; }
+.heartbeat {
   margin-top: 10px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  color: #6e6e78;
+  font-size: 0.75rem;
+  color: #999;
 }
 
-.qs-result {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid #1f1f27;
-}
-.qs-result-row {
+.result-row {
   display: flex;
-  gap: 12px;
+  gap: 14px;
+  align-items: center;
+  margin: 8px 0;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  margin: 6px 0;
+  font-size: 0.85rem;
 }
-.qs-result-label { color: #6e6e78; min-width: 110px; }
-.qs-result-row code { color: #eaeaea; }
-.qs-result-actions { margin-top: 20px; }
+.result-label { color: #999; min-width: 120px; }
+.result-row code { color: #000; background: #F5F5F5; padding: 2px 6px; }
+
+.error-banner {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #FFF5F2;
+  border-left: 3px solid #FF4500;
+  color: #CC2200;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
 </style>
