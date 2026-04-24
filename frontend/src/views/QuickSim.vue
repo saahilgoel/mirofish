@@ -241,11 +241,13 @@ async function launch() {
   }, 500)
 
   try {
+    // Note: axios response interceptor in api/index.js already unwraps to
+    // the JSON body, so `resp` here is { success, data: {...} }.
     const resp = await startQuickSim({
       question: question.value.trim(),
       project_name: projectName.value.trim() || undefined,
     })
-    const data = resp?.data?.data || resp?.data || {}
+    const data = resp?.data || {}
     const taskId = data.task_id
     if (!taskId) throw new Error('Backend did not return a task_id')
     pollTask(taskId)
@@ -260,8 +262,9 @@ async function launch() {
 function pollTask(taskId) {
   const tick = async () => {
     try {
+      // axios interceptor returns the JSON body directly: { success, data }
       const resp = await getTaskStatus(taskId)
-      const d = resp?.data?.data || {}
+      const d = resp?.data || {}
       if (typeof d.progress === 'number') progressPct.value = d.progress
       if (d.message) message.value = d.message
       lastTickAt.value = Date.now()
